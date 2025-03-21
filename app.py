@@ -64,7 +64,7 @@ st.markdown("""
 # Load API keys and initialize models
 def load_api_keys():
     """Load API keys from Streamlit secrets or environment variables"""
-    gemini_api_key = st.secrets.get("GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY"))
+    gemini_api_key = st.secrets.get("GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY","AIzaSyBFjG6kQWfrpg0Q7tcvxxQHNDl3DVW8-gA"))
     hf_token = st.secrets.get("HF_TOKEN", os.environ.get("HF_TOKEN", "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"))
     return gemini_api_key, hf_token
 
