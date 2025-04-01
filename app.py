@@ -4,17 +4,19 @@ import json
 import time
 import base64
 import os
-from gtts import gTTS
-from io import BytesIO
 import tempfile
-import numpy as np
-# Modified imports to handle potential dependency issues
+import re
+from io import BytesIO
+
+# Skip potentially problematic imports
 try:
-    from PIL import Image
-    from transformers import pipeline, AutoTokenizer, AutoModelForMaskedLM
+    from gtts import gTTS
 except ImportError:
-    st.error("Some required libraries couldn't be imported. Using fallback options.")
-    Image = None
+    st.warning("gTTS module not available. Text-to-speech functionality will be disabled.")
+    gTTS = None
+
+# Skip torch and transformers imports entirely
+HAS_ML_MODELS = False
 
 # Set page configuration
 st.set_page_config(
@@ -28,12 +30,30 @@ st.set_page_config(
 GEMINI_API_KEY = "AIzaSyBFjG6kQWfrpg0Q7tcvxxQHNDl3DVW8-gA"
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 
+# Simplified language mapping without ML dependencies
+LANGUAGES = {
+    "en": {"name": "English", "code": "en-us"},
+    "es": {"name": "Spanish", "code": "es-es"},
+    "fr": {"name": "French", "code": "fr-fr"},
+    "de": {"name": "German", "code": "de-de"},
+    "it": {"name": "Italian", "code": "it-it"},
+    "ja": {"name": "Japanese", "code": "ja-jp"},
+    "ko": {"name": "Korean", "code": "ko-kr"},
+    "pt": {"name": "Portuguese", "code": "pt-br"},
+    "ru": {"name": "Russian", "code": "ru-ru"},
+    "zh": {"name": "Chinese", "code": "zh-cn"}
+}
+
+# Remove BERT model dependencies entirely
+def load_ml_models():
+    """This is a stub function as we're not using ML models anymore"""
+    return {"status": "ML models disabled for compatibility"}
+
 # Initialize session state
 if 'business_data' not in st.session_state:
     st.session_state.business_data = {
         "business_name": "",
         "industry": "",
-        "target_audience": "",
         "marketing_goals": "",
         "budget_range": "",
         "current_challenges": "",
@@ -48,55 +68,20 @@ if 'current_tts_text' not in st.session_state:
 if 'uploaded_files' not in st.session_state:
     st.session_state.uploaded_files = {
         'images': [],
-        'videos': [],
-        'audio': [],
-        'documents': []  # Added documents category
+        'documents': []  # Simplified to just documents
     }
-# Voice gender removed as we're only using female voice
 if 'voice_speed' not in st.session_state:
     st.session_state.voice_speed = "Normal"
 if 'language' not in st.session_state:
     st.session_state.language = "en"  # Default language is English
-if 'ml_model' not in st.session_state:
-    st.session_state.ml_model = None
 
-# Language mapping for UI and TTS (simplified without male voice options)
-LANGUAGES = {
-    "en": {"name": "English", "code": "en-us"},
-    "es": {"name": "Spanish", "code": "es-es"},
-    "fr": {"name": "French", "code": "fr-fr"},
-    "de": {"name": "German", "code": "de-de"},
-    "it": {"name": "Italian", "code": "it-it"},
-    "ja": {"name": "Japanese", "code": "ja-jp"},
-    "ko": {"name": "Korean", "code": "ko-kr"},
-    "pt": {"name": "Portuguese", "code": "pt-br"},
-    "ru": {"name": "Russian", "code": "ru-ru"},
-    "zh": {"name": "Chinese", "code": "zh-cn"}
-}
-
-# Initialize ML models for multilingual support with error handling
-@st.cache_resource
-def load_ml_models():
-    """Load and cache ML models for multilingual support"""
-    try:
-        # Set Hugging Face token for authentication
-        hf_token = "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"
-        
-        try:
-            tokenizer = AutoTokenizer.from_pretrained("google-bert/bert-base-multilingual-cased", token=hf_token)
-            model = AutoModelForMaskedLM.from_pretrained("google-bert/bert-base-multilingual-cased", token=hf_token)
-            fill_mask_pipeline = pipeline("fill-mask", model="google-bert/bert-base-multilingual-cased", token=hf_token)
-            return {"tokenizer": tokenizer, "model": model, "fill_mask": fill_mask_pipeline}
-        except Exception as e:
-            st.warning(f"Could not load BERT model: {str(e)}. Using simplified functionality.")
-            return {"error": str(e)}
-    except Exception as e:
-        st.error(f"Error initializing ML models: {str(e)}")
-        return None
-
-# TTS function with simplified voice options (female only)
+# Simplified TTS function that works without ML models
 def text_to_speech(text, speed="Normal", language="en"):
     """Convert text to speech in multiple languages and create an audio player"""
+    if not gTTS:
+        st.warning("Text-to-speech functionality is not available. Please install the gTTS library.")
+        return None
+        
     if not text:
         return None
     
@@ -129,16 +114,22 @@ def text_to_speech(text, speed="Normal", language="en"):
         st.error(f"TTS Error: {str(e)}")
         return None
 
-def encode_image(image_file):
-    """Convert an image file to base64 for Gemini API"""
-    return base64.b64encode(image_file.read()).decode("utf-8")
-
 def encode_media(media_file):
-    """Convert a media file to base64 for Gemini API"""
-    return base64.b64encode(media_file.read()).decode("utf-8")
+    """Convert a media file to base64 for Gemini API with proper error handling"""
+    try:
+        # Reset file pointer to beginning
+        if hasattr(media_file, 'seek'):
+            media_file.seek(0)
+            
+        # Read the content and encode it
+        content = media_file.read()
+        return base64.b64encode(content).decode("utf-8")
+    except Exception as e:
+        st.warning(f"Error encoding media file {getattr(media_file, 'name', 'unknown')}: {str(e)}")
+        return ""
 
 def generate_with_gemini(prompt, media_files=None, language="en"):
-    """Generate content using Gemini model with multimodal support and error handling"""
+    """Generate content using Gemini model with multimodal support and simplified error handling"""
     try:
         headers = {
             "Content-Type": "application/json",
@@ -191,6 +182,10 @@ def generate_with_gemini(prompt, media_files=None, language="en"):
             try:
                 for media_file in media_files:
                     try:
+                        # Reset file pointer to beginning of file
+                        if hasattr(media_file, 'seek'):
+                            media_file.seek(0)
+                            
                         media_type = media_file.type
                         
                         if media_type.startswith('image'):
@@ -201,15 +196,11 @@ def generate_with_gemini(prompt, media_files=None, language="en"):
                                     "data": encode_media(media_file)
                                 }
                             })
-                        elif media_type.startswith('video'):
-                            # Future support for video once Gemini supports it
-                            st.info("Video analysis functionality is coming soon.")
-                        elif media_type.startswith('audio'):
-                            # Future support for audio once Gemini supports it
-                            st.info("Audio analysis functionality is coming soon.")
                         elif media_type == 'application/pdf' or media_type.startswith('text'):
                             # Handle documents
                             try:
+                                # Reset file pointer again just in case
+                                media_file.seek(0)
                                 document_content = media_file.read().decode('utf-8', errors='replace')
                                 # Limit document content length to avoid API limits
                                 max_content_length = 10000  # Adjust based on Gemini's limits
@@ -299,6 +290,7 @@ def generate_with_gemini(prompt, media_files=None, language="en"):
         st.error(f"Error: {str(e)}")
         return f"An error occurred: {str(e)}"
 
+# Simplified version - removed ML dependency
 def analyze_media_for_autofill(media_files):
     """Analyze uploaded media files to extract business information for autofill"""
     if not media_files:
@@ -372,41 +364,42 @@ def analyze_media_for_autofill(media_files):
         return {}
 
 def save_uploaded_file(uploaded_file, file_type):
-    """Save uploaded file and return the file path"""
-    file_details = {"FileName": uploaded_file.name, "FileType": uploaded_file.type, "FileSize": uploaded_file.size}
-    
-    # Add to session state
-    if file_type == "image":
-        st.session_state.uploaded_files['images'].append(file_details)
-    elif file_type == "video":
-        st.session_state.uploaded_files['videos'].append(file_details)
-    elif file_type == "audio":
-        st.session_state.uploaded_files['audio'].append(file_details)
-    elif file_type == "document":
-        st.session_state.uploaded_files['documents'].append(file_details)
-    
-    return file_details
+    """Save uploaded file information to session state"""
+    try:
+        file_details = {"FileName": uploaded_file.name, "FileType": uploaded_file.type, "FileSize": uploaded_file.size}
+        
+        # Add to session state
+        if file_type == "image":
+            st.session_state.uploaded_files['images'].append(file_details)
+        elif file_type == "document":
+            st.session_state.uploaded_files['documents'].append(file_details)
+        
+        return file_details
+    except Exception as e:
+        st.error(f"Error saving file details: {str(e)}")
+        return None
 
 def display_file_preview(file, file_type):
-    """Display a preview of the uploaded file"""
-    if file_type == "image":
-        st.image(file, caption=file.name, use_column_width=True)
-    elif file_type == "video":
-        st.video(file)
-    elif file_type == "audio":
-        st.audio(file)
-    elif file_type == "document":
-        # Display document info
-        st.write(f"Document: {file.name}")
-        try:
-            # Try to show a preview for text documents
+    """Display a preview of the uploaded file with error handling"""
+    try:
+        if file_type == "image":
+            st.image(file, caption=file.name, use_column_width=True)
+        elif file_type == "document":
+            # Display document info
+            st.write(f"Document: {file.name}")
             if file.type.startswith('text'):
-                text_content = file.read().decode('utf-8')
-                st.code(text_content[:500] + '...' if len(text_content) > 500 else text_content)
-        except:
-            st.write("Preview not available for this document type")
+                try:
+                    # Reset file pointer
+                    file.seek(0)
+                    text_content = file.read().decode('utf-8')
+                    preview_length = min(500, len(text_content))
+                    st.code(text_content[:preview_length] + ('...' if preview_length < len(text_content) else ''))
+                except:
+                    st.write("Preview not available for this document type")
+    except Exception as e:
+        st.error(f"Error displaying file preview: {str(e)}")
 
-# UI Components
+# UI Components with simpler implementation
 def sidebar():
     with st.sidebar:
         st.title("🚀 ROH-Ads")
@@ -428,40 +421,43 @@ def sidebar():
             st.session_state.language = selected_language
             st.experimental_rerun()
         
-        # TTS Controls
-        st.subheader("🔊 Text-to-Speech")
-        st.session_state.tts_active = st.toggle("Enable AI Voice", value=st.session_state.tts_active)
-        
-        st.session_state.voice_speed = st.select_slider(
-            "Voice Speed",
-            options=["Slow", "Normal", "Fast"],
-            value=st.session_state.voice_speed,
-            disabled=not st.session_state.tts_active
-        )
-        
-        if st.session_state.tts_active and st.button("Speak Current Analysis"):
-            if st.session_state.current_tts_text:
-                # Create a short summary for TTS to avoid long audio
-                summary_prompt = f"""
-                Create a 3-4 sentence summary of the key points from this content. Focus only on the most important takeaways:
-                
-                {st.session_state.current_tts_text[:1000]}...
-                """
-                with st.spinner("Generating audio summary..."):
-                    summary = generate_with_gemini(summary_prompt, language=st.session_state.language)
-                    audio_player = text_to_speech(
-                        summary, 
-                        speed=st.session_state.voice_speed,
-                        language=st.session_state.language
-                    )
-                    if audio_player:
-                        st.markdown(audio_player, unsafe_allow_html=True)
-            else:
-                st.warning("No analysis available to speak yet.")
+        # TTS Controls - only show if gTTS is available
+        if gTTS:
+            st.subheader("🔊 Text-to-Speech")
+            st.session_state.tts_active = st.toggle("Enable AI Voice", value=st.session_state.tts_active)
+            
+            st.session_state.voice_speed = st.select_slider(
+                "Voice Speed",
+                options=["Slow", "Normal", "Fast"],
+                value=st.session_state.voice_speed,
+                disabled=not st.session_state.tts_active
+            )
+            
+            if st.session_state.tts_active and st.button("Speak Current Analysis"):
+                if st.session_state.current_tts_text:
+                    # Create a short summary to avoid long audio
+                    summary_prompt = f"""
+                    Create a 3-4 sentence summary of the key points from this content. Focus only on the most important takeaways:
+                    
+                    {st.session_state.current_tts_text[:1000]}...
+                    """
+                    with st.spinner("Generating audio summary..."):
+                        summary = generate_with_gemini(summary_prompt, language=st.session_state.language)
+                        audio_player = text_to_speech(
+                            summary, 
+                            speed=st.session_state.voice_speed,
+                            language=st.session_state.language
+                        )
+                        if audio_player:
+                            st.markdown(audio_player, unsafe_allow_html=True)
+                else:
+                    st.warning("No analysis available to speak yet.")
+        else:
+            st.info("Text-to-speech functionality is not available. Please install the gTTS library.")
         
         st.markdown("---")
         
-        # File Upload Section
+        # Simplified upload section - focus on core functionality
         st.subheader("📁 Media Upload")
         
         # Image Upload
@@ -471,20 +467,6 @@ def sidebar():
                 save_uploaded_file(img, "image")
                 st.success(f"Uploaded image: {img.name}")
                 
-        # Video Upload
-        uploaded_video = st.file_uploader("Upload Videos", type=["mp4", "mov", "avi"], accept_multiple_files=True)
-        if uploaded_video:
-            for vid in uploaded_video:
-                save_uploaded_file(vid, "video")
-                st.success(f"Uploaded video: {vid.name}")
-                
-        # Audio Upload
-        uploaded_audio = st.file_uploader("Upload Audio", type=["mp3", "wav", "ogg"], accept_multiple_files=True)
-        if uploaded_audio:
-            for aud in uploaded_audio:
-                save_uploaded_file(aud, "audio")
-                st.success(f"Uploaded audio: {aud.name}")
-        
         # Document Upload
         uploaded_docs = st.file_uploader("Upload Documents", type=["pdf", "txt", "docx"], accept_multiple_files=True)
         if uploaded_docs:
@@ -516,7 +498,7 @@ def business_profile_page():
     st.subheader("Upload Business Media for Auto-Analysis")
     st.write("Upload your business media to automatically extract information")
     
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
     
     with col1:
         logo = st.file_uploader("Company Logo", type=["jpg", "jpeg", "png"])
@@ -530,38 +512,27 @@ def business_profile_page():
             save_uploaded_file(business_docs, "document")
             st.write(f"Uploaded: {business_docs.name}")
     
-    with col3:
-        promo_media = st.file_uploader("Promotional Media", type=["jpg", "jpeg", "png", "mp4", "mp3"])
-        if promo_media:
-            if promo_media.type.startswith('image'):
-                st.image(promo_media, width=200)
-                save_uploaded_file(promo_media, "image")
-            elif promo_media.type.startswith('video'):
-                st.video(promo_media)
-                save_uploaded_file(promo_media, "video")
-            elif promo_media.type.startswith('audio'):
-                st.audio(promo_media)
-                save_uploaded_file(promo_media, "audio")
-    
     # Auto-analyze button
     media_files_for_analysis = []
     if logo:
         media_files_for_analysis.append(logo)
     if business_docs:
         media_files_for_analysis.append(business_docs)
-    if promo_media:
-        media_files_for_analysis.append(promo_media)
     
     if media_files_for_analysis and st.button("Auto-Analyze Media"):
         with st.spinner("Analyzing your business media..."):
-            extracted_data = analyze_media_for_autofill(media_files_for_analysis)
-            
-            # Update session state with extracted data
-            for key, value in extracted_data.items():
-                if value and key in st.session_state.business_data:
-                    st.session_state.business_data[key] = value
-            
-            st.success("Media analyzed and form auto-filled!")
+            try:
+                extracted_data = analyze_media_for_autofill(media_files_for_analysis)
+                
+                # Update session state with extracted data
+                for key, value in extracted_data.items():
+                    if value and key in st.session_state.business_data:
+                        st.session_state.business_data[key] = value
+                
+                st.success("Media analyzed and form auto-filled!")
+            except Exception as e:
+                st.error(f"Auto-analysis failed: {str(e)}")
+                st.info("You can still manually fill out the form below.")
     
     st.markdown("---")
     
@@ -623,10 +594,6 @@ def business_profile_page():
             uploaded_media_text = ""
             if st.session_state.uploaded_files['images']:
                 uploaded_media_text += f"They have uploaded {len(st.session_state.uploaded_files['images'])} images. "
-            if st.session_state.uploaded_files['videos']:
-                uploaded_media_text += f"They have uploaded {len(st.session_state.uploaded_files['videos'])} videos. "
-            if st.session_state.uploaded_files['audio']:
-                uploaded_media_text += f"They have uploaded {len(st.session_state.uploaded_files['audio'])} audio files. "
             if st.session_state.uploaded_files['documents']:
                 uploaded_media_text += f"They have uploaded {len(st.session_state.uploaded_files['documents'])} documents. "
             
@@ -646,30 +613,34 @@ def business_profile_page():
             """
             
             with st.spinner("Analyzing your business profile..."):
-                analysis = generate_with_gemini(analysis_prompt, language=st.session_state.language)
-                st.session_state.profile_analysis = analysis
-                st.session_state.current_tts_text = analysis
-            
-            st.subheader("Initial Analysis")
-            st.write(st.session_state.profile_analysis)
-            
-            # Auto-play TTS if enabled
-            if st.session_state.tts_active:
-                # Create a short summary for TTS to avoid long audio
-                summary_prompt = f"""
-                Create a 3-4 sentence summary of the following marketing analysis. Keep it very brief but informative:
+                try:
+                    analysis = generate_with_gemini(analysis_prompt, language=st.session_state.language)
+                    st.session_state.profile_analysis = analysis
+                    st.session_state.current_tts_text = analysis
                 
-                {analysis}
-                """
-                with st.spinner("Generating audio summary..."):
-                    summary = generate_with_gemini(summary_prompt, language=st.session_state.language)
-                    audio_player = text_to_speech(
-                        summary, 
-                        speed=st.session_state.voice_speed,
-                        language=st.session_state.language
-                    )
-                    if audio_player:
-                        st.markdown(audio_player, unsafe_allow_html=True)
+                    st.subheader("Initial Analysis")
+                    st.write(st.session_state.profile_analysis)
+                    
+                    # Auto-play TTS if enabled and available
+                    if st.session_state.tts_active and gTTS:
+                        # Create a short summary for TTS to avoid long audio
+                        summary_prompt = f"""
+                        Create a 3-4 sentence summary of the following marketing analysis. Keep it very brief but informative:
+                        
+                        {analysis}
+                        """
+                        with st.spinner("Generating audio summary..."):
+                            summary = generate_with_gemini(summary_prompt, language=st.session_state.language)
+                            audio_player = text_to_speech(
+                                summary, 
+                                speed=st.session_state.voice_speed,
+                                language=st.session_state.language
+                            )
+                            if audio_player:
+                                st.markdown(audio_player, unsafe_allow_html=True)
+                except Exception as e:
+                    st.error(f"Analysis error: {str(e)}")
+                    st.warning("Please try again or continue without the initial analysis.")
         else:
             st.error("Please fill in at least the Business Name and Industry fields.")
 
@@ -686,7 +657,7 @@ def strategy_generator_page():
     st.subheader("Upload Strategy-Related Media")
     strategy_media = st.file_uploader(
         "Upload relevant market research, competitor analyses, etc.", 
-        type=["jpg", "jpeg", "png", "pdf", "docx", "txt", "mp4", "mp3"], 
+        type=["jpg", "jpeg", "png", "pdf", "docx", "txt"], 
         accept_multiple_files=True
     )
     
@@ -694,22 +665,17 @@ def strategy_generator_page():
     
     if strategy_media:
         for media in strategy_media:
-            if media.type.startswith('image'):
-                save_uploaded_file(media, "image")
-                st.image(media, width=150, caption=media.name)
-                strategy_media_files.append(media)
-            elif media.type.startswith('video'):
-                save_uploaded_file(media, "video")
-                st.video(media)
-                strategy_media_files.append(media)
-            elif media.type.startswith('audio'):
-                save_uploaded_file(media, "audio")
-                st.audio(media)
-                strategy_media_files.append(media)
-            else:  # Document
-                save_uploaded_file(media, "document")
-                st.write(f"Uploaded document: {media.name}")
-                strategy_media_files.append(media)
+            try:
+                if media.type.startswith('image'):
+                    save_uploaded_file(media, "image")
+                    st.image(media, width=150, caption=media.name)
+                    strategy_media_files.append(media)
+                else:  # Document
+                    save_uploaded_file(media, "document")
+                    st.write(f"Uploaded document: {media.name}")
+                    strategy_media_files.append(media)
+            except Exception as e:
+                st.error(f"Error processing file {media.name}: {str(e)}")
     
     st.markdown("---")
     
@@ -736,10 +702,6 @@ def strategy_generator_page():
             uploaded_media_text = ""
             if st.session_state.uploaded_files['images']:
                 uploaded_media_text += f"They have uploaded {len(st.session_state.uploaded_files['images'])} images. "
-            if st.session_state.uploaded_files['videos']:
-                uploaded_media_text += f"They have uploaded {len(st.session_state.uploaded_files['videos'])} videos. "
-            if st.session_state.uploaded_files['audio']:
-                uploaded_media_text += f"They have uploaded {len(st.session_state.uploaded_files['audio'])} audio files. "
             if st.session_state.uploaded_files['documents']:
                 uploaded_media_text += f"They have uploaded {len(st.session_state.uploaded_files['documents'])} documents. "
                 
@@ -761,6 +723,8 @@ def strategy_generator_page():
             Please structure the strategy with these sections:
             1. Executive Summary
             2. Market Analysis
+# ... continuing from where the document ends:
+
             3. 5-Year Growth Trajectory
             4. Marketing Channels & Tactics
             5. Content Strategy
@@ -773,42 +737,45 @@ def strategy_generator_page():
             """
             
             with st.spinner("Generating your marketing strategy..."):
-                # Use strategy_media_files if available for multimodal input
-                strategy = generate_with_gemini(strategy_prompt, 
-                                              media_files=strategy_media_files if strategy_media_files else None,
-                                              language=st.session_state.language)
-                st.session_state.marketing_strategy = strategy
-                st.session_state.current_tts_text = strategy
-            
-            st.subheader("Your Marketing Strategy")
-            st.write(st.session_state.marketing_strategy)
-            
-            # Download button for the strategy
-            st.download_button(
-                label="Download Strategy as Text",
-                data=st.session_state.marketing_strategy,
-                file_name=f"{st.session_state.business_data['business_name']}_marketing_strategy.txt",
-                mime="text/plain"
-            )
-            
-            # Auto-play TTS if enabled
-            if st.session_state.tts_active:
-                # Create a short summary for TTS to avoid long audio
-                summary_prompt = f"""
-                Create a 3-4 sentence summary of the key points from this marketing strategy. Focus only on the most important takeaways:
+                try:
+                    # Use strategy_media_files if available for multimodal input
+                    strategy = generate_with_gemini(strategy_prompt, 
+                                                  media_files=strategy_media_files if strategy_media_files else None,
+                                                  language=st.session_state.language)
+                    st.session_state.marketing_strategy = strategy
+                    st.session_state.current_tts_text = strategy
                 
-                {strategy[:1000]}...
-                """
-                with st.spinner("Generating audio summary..."):
-                    summary = generate_with_gemini(summary_prompt, language=st.session_state.language)
-                    audio_player = text_to_speech(
-                        summary, 
-                        gender=st.session_state.voice_gender, 
-                        speed=st.session_state.voice_speed,
-                        language=st.session_state.language
+                    st.subheader("Your Marketing Strategy")
+                    st.write(st.session_state.marketing_strategy)
+                    
+                    # Download button for the strategy
+                    st.download_button(
+                        label="Download Strategy as Text",
+                        data=st.session_state.marketing_strategy,
+                        file_name=f"{st.session_state.business_data['business_name']}_marketing_strategy.txt",
+                        mime="text/plain"
                     )
-                    if audio_player:
-                        st.markdown(audio_player, unsafe_allow_html=True)
+                    
+                    # Auto-play TTS if enabled and available
+                    if st.session_state.tts_active and gTTS:
+                        # Create a short summary for TTS to avoid long audio
+                        summary_prompt = f"""
+                        Create a 3-4 sentence summary of the key points from this marketing strategy. Focus only on the most important takeaways:
+                        
+                        {strategy[:1000]}...
+                        """
+                        with st.spinner("Generating audio summary..."):
+                            summary = generate_with_gemini(summary_prompt, language=st.session_state.language)
+                            audio_player = text_to_speech(
+                                summary, 
+                                speed=st.session_state.voice_speed,
+                                language=st.session_state.language
+                            )
+                            if audio_player:
+                                st.markdown(audio_player, unsafe_allow_html=True)
+                except Exception as e:
+                    st.error(f"Strategy generation error: {str(e)}")
+                    st.info("Try again with fewer media files or a simpler request.")
         else:
             st.error("Please select at least one marketing focus area.")
 
@@ -825,7 +792,7 @@ def campaign_planning_page():
     st.subheader("Upload Campaign-Related Media")
     campaign_media = st.file_uploader(
         "Upload creative assets, brand guidelines, etc.", 
-        type=["jpg", "jpeg", "png", "pdf", "docx", "txt", "mp4", "mp3"], 
+        type=["jpg", "jpeg", "png", "pdf", "docx", "txt"], 
         accept_multiple_files=True
     )
     
@@ -833,22 +800,17 @@ def campaign_planning_page():
     
     if campaign_media:
         for media in campaign_media:
-            if media.type.startswith('image'):
-                save_uploaded_file(media, "image")
-                st.image(media, width=150, caption=media.name)
-                campaign_media_files.append(media)
-            elif media.type.startswith('video'):
-                save_uploaded_file(media, "video")
-                st.video(media)
-                campaign_media_files.append(media)
-            elif media.type.startswith('audio'):
-                save_uploaded_file(media, "audio")
-                st.audio(media)
-                campaign_media_files.append(media)
-            else:  # Document
-                save_uploaded_file(media, "document")
-                st.write(f"Uploaded document: {media.name}")
-                campaign_media_files.append(media)
+            try:
+                if media.type.startswith('image'):
+                    save_uploaded_file(media, "image")
+                    st.image(media, width=150, caption=media.name)
+                    campaign_media_files.append(media)
+                else:  # Document
+                    save_uploaded_file(media, "document")
+                    st.write(f"Uploaded document: {media.name}")
+                    campaign_media_files.append(media)
+            except Exception as e:
+                st.error(f"Error processing file {media.name}: {str(e)}")
     
     st.markdown("---")
     
@@ -885,10 +847,6 @@ def campaign_planning_page():
             uploaded_media_text = ""
             if st.session_state.uploaded_files['images']:
                 uploaded_media_text += f"They have uploaded {len(st.session_state.uploaded_files['images'])} images. "
-            if st.session_state.uploaded_files['videos']:
-                uploaded_media_text += f"They have uploaded {len(st.session_state.uploaded_files['videos'])} videos. "
-            if st.session_state.uploaded_files['audio']:
-                uploaded_media_text += f"They have uploaded {len(st.session_state.uploaded_files['audio'])} audio files. "
             if st.session_state.uploaded_files['documents']:
                 uploaded_media_text += f"They have uploaded {len(st.session_state.uploaded_files['documents'])} documents. "
                 
@@ -921,40 +879,43 @@ def campaign_planning_page():
             """
             
             with st.spinner("Generating your campaign plan..."):
-                campaign_plan = generate_with_gemini(campaign_prompt, 
-                                                   media_files=campaign_media_files if campaign_media_files else None,
-                                                   language=st.session_state.language)
-                st.session_state.current_tts_text = campaign_plan
-            
-            st.subheader("Your Campaign Plan")
-            st.write(campaign_plan)
-            
-            # Download button for the campaign plan
-            st.download_button(
-                label="Download Campaign Plan",
-                data=campaign_plan,
-                file_name=f"{campaign_name}_campaign_plan.txt",
-                mime="text/plain"
-            )
-            
-            # Auto-play TTS if enabled
-            if st.session_state.tts_active:
-                # Create a short summary for TTS to avoid long audio
-                summary_prompt = f"""
-                Create a brief 3-4 sentence summary of this marketing campaign plan for {campaign_name}. Focus on the key actions and expected outcomes:
+                try:
+                    campaign_plan = generate_with_gemini(campaign_prompt, 
+                                                       media_files=campaign_media_files if campaign_media_files else None,
+                                                       language=st.session_state.language)
+                    st.session_state.current_tts_text = campaign_plan
                 
-                {campaign_plan[:1000]}...
-                """
-                with st.spinner("Generating audio summary..."):
-                    summary = generate_with_gemini(summary_prompt, language=st.session_state.language)
-                    audio_player = text_to_speech(
-                        summary, 
-                        gender=st.session_state.voice_gender, 
-                        speed=st.session_state.voice_speed,
-                        language=st.session_state.language
+                    st.subheader("Your Campaign Plan")
+                    st.write(campaign_plan)
+                    
+                    # Download button for the campaign plan
+                    st.download_button(
+                        label="Download Campaign Plan",
+                        data=campaign_plan,
+                        file_name=f"{campaign_name}_campaign_plan.txt",
+                        mime="text/plain"
                     )
-                    if audio_player:
-                        st.markdown(audio_player, unsafe_allow_html=True)
+                    
+                    # Auto-play TTS if enabled and available
+                    if st.session_state.tts_active and gTTS:
+                        # Create a short summary for TTS to avoid long audio
+                        summary_prompt = f"""
+                        Create a brief 3-4 sentence summary of this marketing campaign plan for {campaign_name}. Focus on the key actions and expected outcomes:
+                        
+                        {campaign_plan[:1000]}...
+                        """
+                        with st.spinner("Generating audio summary..."):
+                            summary = generate_with_gemini(summary_prompt, language=st.session_state.language)
+                            audio_player = text_to_speech(
+                                summary, 
+                                speed=st.session_state.voice_speed,
+                                language=st.session_state.language
+                            )
+                            if audio_player:
+                                st.markdown(audio_player, unsafe_allow_html=True)
+                except Exception as e:
+                    st.error(f"Campaign plan generation error: {str(e)}")
+                    st.info("Try again with fewer media files or a simpler request.")
         else:
             st.error("Please fill in all required fields.")
 
@@ -963,7 +924,7 @@ def media_gallery_page():
     st.write("View and manage your uploaded media files")
     
     # Filter tabs
-    tab1, tab2, tab3, tab4 = st.tabs(["Images", "Videos", "Audio", "Documents"])
+    tab1, tab2 = st.tabs(["Images", "Documents"])
     
     with tab1:
         st.subheader("Uploaded Images")
@@ -980,28 +941,6 @@ def media_gallery_page():
             st.info("No images uploaded yet")
     
     with tab2:
-        st.subheader("Uploaded Videos")
-        if st.session_state.uploaded_files['videos']:
-            for video_info in st.session_state.uploaded_files['videos']:
-                st.write(f"**{video_info['FileName']}**")
-                st.write(f"Type: {video_info['FileType']}")
-                st.write(f"Size: {video_info['FileSize']/1024/1024:.1f} MB")
-                st.markdown("---")
-        else:
-            st.info("No videos uploaded yet")
-    
-    with tab3:
-        st.subheader("Uploaded Audio")
-        if st.session_state.uploaded_files['audio']:
-            for audio_info in st.session_state.uploaded_files['audio']:
-                st.write(f"**{audio_info['FileName']}**")
-                st.write(f"Type: {audio_info['FileType']}")
-                st.write(f"Size: {audio_info['FileSize']/1024/1024:.1f} MB")
-                st.markdown("---")
-        else:
-            st.info("No audio files uploaded yet")
-            
-    with tab4:
         st.subheader("Uploaded Documents")
         if st.session_state.uploaded_files['documents']:
             for doc_info in st.session_state.uploaded_files['documents']:
@@ -1012,21 +951,99 @@ def media_gallery_page():
         else:
             st.info("No documents uploaded yet")
     
-    # Media analysis section
-    st.subheader("Media Analysis")
-    media_to_analyze = st.multiselect(
-        "Select media files to analyze",
-        options=[file['FileName'] for category in st.session_state.uploaded_files.values() for file in category]
-    )
+    # Upload new media
+    st.subheader("Upload New Media")
     
-    if media_to_analyze and st.button("Analyze Selected Media"):
-        st.write("Analyzing media...")
-        # This is a placeholder - in a real app we'd need to retrieve the actual file objects
-        # but for demo purposes we'll just show the concept
-        analysis_result = f"Analysis of {len(media_to_analyze)} items would be performed here using Gemini"
-        st.write(analysis_result)
+    upload_type = st.radio("Select media type", ["Image", "Document"])
+    
+    if upload_type == "Image":
+        new_images = st.file_uploader("Upload new images", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
+        if new_images:
+            for img in new_images:
+                try:
+                    save_uploaded_file(img, "image")
+                    st.success(f"Uploaded image: {img.name}")
+                    st.image(img, width=200)
+                except Exception as e:
+                    st.error(f"Error uploading {img.name}: {str(e)}")
+    
+    elif upload_type == "Document":
+        new_docs = st.file_uploader("Upload new documents", type=["pdf", "txt", "docx"], accept_multiple_files=True)
+        if new_docs:
+            for doc in new_docs:
+                try:
+                    save_uploaded_file(doc, "document")
+                    st.success(f"Uploaded document: {doc.name}")
+                except Exception as e:
+                    st.error(f"Error uploading {doc.name}: {str(e)}")
+    
+    # Media analysis section with simplified functionality
+    if st.session_state.uploaded_files['images'] or st.session_state.uploaded_files['documents']:
+        st.subheader("Media Analysis")
+        
+        if st.button("Analyze All Media"):
+            st.write("Analyzing media...")
+            
+            # Gather media files for analysis
+            media_for_analysis = []
+            
+            # Only include the first 3 files to avoid timeout/memory issues
+            max_files = 3
+            count = 0
+            
+            # Collect image files
+            for img_info in st.session_state.uploaded_files['images']:
+                if count >= max_files:
+                    break
+                # We don't have access to the actual files here, so we'll just work with metadata
+                count += 1
+            
+            # Collect document files
+            for doc_info in st.session_state.uploaded_files['documents']:
+                if count >= max_files:
+                    break
+                # We don't have access to the actual files here, so we'll just work with metadata
+                count += 1
+                
+            # Generate generic analysis based on the metadata
+            analysis_prompt = f"""
+            Provide a general analysis of media for marketing purposes, considering:
+            - Number of images: {len(st.session_state.uploaded_files['images'])}
+            - Number of documents: {len(st.session_state.uploaded_files['documents'])}
+            
+            Business context:
+            - Business Name: {st.session_state.business_data.get('business_name', 'Unknown')}
+            - Industry: {st.session_state.business_data.get('industry', 'Unknown')}
+            
+            What recommendations would you provide for improving their media assets for marketing purposes?
+            """
+            
+            try:
+                with st.spinner("Generating media analysis..."):
+                    analysis = generate_with_gemini(analysis_prompt, language=st.session_state.language)
+                    st.write(analysis)
+            except Exception as e:
+                st.error(f"Analysis error: {str(e)}")
+                st.info("Please try again with fewer files or a simpler request.")
 
-# Main application with error handling
+# Add requirements to help with installation
+def show_requirements():
+    """Display the minimum required packages to run the app"""
+    st.info("""
+    ### Minimum Required Packages:
+    ```
+    streamlit==1.28.0
+    requests>=2.27.1
+    python-dotenv>=0.19.1
+    ```
+    
+    ### Optional Packages for Full Features:
+    ```
+    gtts>=2.3.0  # For text-to-speech
+    ```
+    """)
+
+# Main application with simplified implementation
 def main():
     # Initialize session state if not already done
     if 'language' not in st.session_state:
@@ -1036,15 +1053,6 @@ def main():
     if 'voice_speed' not in st.session_state:
         st.session_state.voice_speed = "Normal"
     
-    # Try to load ML models, but continue even if it fails
-    try:
-        if 'ml_model' not in st.session_state:
-            st.session_state.ml_model = load_ml_models()
-    except Exception as e:
-        st.warning(f"ML model loading failed: {str(e)}. Some features may be limited.")
-        st.session_state.ml_model = None
-    
-    # Continue with the app, even if ML models aren't available
     try:
         page = sidebar()
         
@@ -1059,6 +1067,20 @@ def main():
     except Exception as e:
         st.error(f"An error occurred: {str(e)}")
         st.write("Please try refreshing the page or check your internet connection.")
+        
+        # Show the stack trace in debug mode
+        import traceback
+        st.write("Detailed error information (for debugging):")
+        st.code(traceback.format_exc())
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        st.error(f"Application error: {str(e)}")
+        show_requirements()
+        
+        # Show stack trace in a collapsible section
+        with st.expander("Technical Error Details"):
+            import traceback
+            st.code(traceback.format_exc())
